@@ -15,13 +15,6 @@ import requests
 import import_tigris
 
 
-def add_label_if_not_default(tigris_issue, gh_issue, field_name, default_value):
-    field_value = tigris_issue.xpath(field_name)[0].text
-    if field_value and (field_value != default_value):
-        gh_issue.add_to_labels(field_name.replace(
-            '_', ' ').title() + ': ' + field_value)
-
-
 def import_issue_status(tigris_issue, gh_issue):
     '''Map between Tigris issue status and the states on GitHub.'''
     status = tigris_issue.xpath('issue_status')[0].text
@@ -34,7 +27,7 @@ def import_priority(tigris_issue, gh_issue):
     '''Import the issue's priority, if set.'''
     priority = tigris_issue.xpath('priority')[0].text
     if priority:
-        gh_issue.add_to_labels()
+        gh_issue.add_to_labels(priority)
 
 
 def import_resolution(tigris_issue, gh_issue):
@@ -49,25 +42,8 @@ def import_resolution(tigris_issue, gh_issue):
         gh_issue.add_to_labels(label)
 
 
-def import_component(tigris_issue, gh_issue):
-    add_label_if_not_default(tigris_issue, gh_issue, 'component', 'scons')
-
-
-def import_version(tigris_issue, gh_issue):
-    add_label_if_not_default(tigris_issue, gh_issue,
-                             'version', '-unspecified-')
-
-
-def import_rep_platform(tigris_issue, gh_issue):
-    add_label_if_not_default(tigris_issue, gh_issue, 'rep_platform', 'All')
-
-
 def import_assigned_to(tigris_issue, gh_issue):
     pass
-
-
-def import_subcomponent(tigris_issue, gh_issue):
-    add_label_if_not_default(tigris_issue, gh_issue, 'subcomponent', 'scons')
 
 
 def import_reporter(tigris_issue, gh_issue):
@@ -126,8 +102,19 @@ def import_votes(tigris_issue, gh_issue):
                       '\r\nVotes for this issue: ' + votes[0].text + '.\r\n')
 
 
-def import_op_sys(tigris_issue, gh_issue):
-    add_label_if_not_default(tigris_issue, gh_issue, 'op_sys', 'All')
+def add_non_default_labels(tigris_issue, gh_issue):
+    labels = []
+    for field_name, default_value in (
+        ('component', 'scons'),
+        ('version', '-unspecified-'),
+        ('rep_platform', 'All'),
+        ('subcomponent', 'scons'),
+        ('op_sys', 'All')
+        ):
+        field_value = tigris_issue.xpath(field_name)[0].text
+        if field_value and (field_value != default_value):
+            labels.append(str(field_name.replace('_', ' ').title() + ': ' + field_value))
+    gh_issue.add_to_labels(*labels)
 
 
 def import_keywords(tigris_issue, gh_issue):
@@ -140,10 +127,10 @@ def import_keywords(tigris_issue, gh_issue):
                 if keyword.text:
                     labels.append(keyword.text.split(',').strip())
         if labels:
-            gh_issue.add_to_labels(labels)
+            gh_issue.add_to_labels(*labels)
 
 
-def add_relationship(tigris_issue, gh_issue, field_name, relationship):
+def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
     suffix = ''
     field_name = 'dependson'
     sorted_fields = sorted(tigris_issue.xpath(
@@ -153,30 +140,19 @@ def add_relationship(tigris_issue, gh_issue, field_name, relationship):
         suffix += ' said this issue ' + relationship + ' #'
         suffix += field.xpath('issue_id')[0].text
         suffix += ' at ' + field.xpath('when')[0].text + '.\r\n'
+    return suffix
+
+def add_relationships(tigris_issue, gh_issue):
+    suffix = ''
+    for field_name, relationship in (
+        ('dependson', 'depends on'),
+        ('blocks', 'blocks'),
+        ('is_duplicate', ' is a duplicate of'),
+        ('has_duplicates', 'is duplicated by'),
+    ):
+        suffix += get_relationship_text(tigris_issue, gh_issue, field_name, relationship)
     if suffix:
         gh_issue.edit(body=gh_issue.body + suffix)
-
-
-def import_dependson(tigris_issue, gh_issue):
-    '''*'''
-    add_relationship(tigris_issue, gh_issue, 'dependson', 'depends on')
-
-
-def import_blocks(tigris_issue, gh_issue):
-    '''*'''
-    add_relationship(tigris_issue, gh_issue, 'blocks', 'blocks')
-
-
-def import_is_duplicate(tigris_issue, gh_issue):
-    '''*'''
-    add_relationship(tigris_issue, gh_issue,
-                     'is_duplicate', ' is a duplicate of')
-
-
-def import_has_duplicates(tigris_issue, gh_issue):
-    '''*'''
-    add_relationship(tigris_issue, gh_issue,
-                     'has_duplicates', 'is duplicated by')
 
 
 def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
@@ -250,7 +226,10 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
         body += long_desc.xpath('who')[0].text
         body += ' said at '
         body += long_desc.xpath('issue_when')[0].text
-        body += '\r\n>' + html.unescape(long_desc.xpath('thetext')[0].text)
+        long_desc_text = long_desc.xpath('thetext')[0].text
+        if not long_desc_text:
+            long_desc_text = 'No text was provided with this entry.'
+        body += '\r\n>' + html.unescape(long_desc_text)
         body += '\r\n\r\n'
     gh_issue.edit(title=title, body=body)
 
@@ -259,29 +238,17 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
     import_issue_status(tigris_issue, gh_issue)
     import_priority(tigris_issue, gh_issue)
     import_resolution(tigris_issue, gh_issue)
-    import_component(tigris_issue, gh_issue)
-    import_version(tigris_issue, gh_issue)
-    import_rep_platform(tigris_issue, gh_issue)
+    add_non_default_labels(tigris_issue, gh_issue)
     import_assigned_to(tigris_issue, gh_issue)
-    import_subcomponent(tigris_issue, gh_issue)
     import_reporter(tigris_issue, gh_issue)
     import_target_milestone(tigris_issue, gh_issue)
     import_issue_type(tigris_issue, gh_issue)
     import_creation_ts(tigris_issue, gh_issue)
     import_issue_file_loc(tigris_issue, gh_issue)
     import_votes(tigris_issue, gh_issue)
-    import_op_sys(tigris_issue, gh_issue)
     import_keywords(tigris_issue, gh_issue)
 
     import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo)
-
-
-def update_issue_dependencies(tigris_issue, gh_issue):
-    '''This requires all of the issues to have been created.'''
-    import_dependson(tigris_issue, gh_issue)
-    import_blocks(tigris_issue, gh_issue)
-    import_is_duplicate(tigris_issue, gh_issue)
-    import_has_duplicates(tigris_issue, gh_issue)
 
 
 def main():
@@ -313,7 +280,7 @@ def main():
         with open(issue_group_file, 'rb') as f_in:
             issues_xml = lxml.etree.XML(f_in.read())
             for tigris_issue in issues_xml:
-                update_issue_dependencies(tigris_issue, issue_repo)
+                add_relationships(tigris_issue, issue_repo)
 
 
 if __name__ == '__main__':
