@@ -15,50 +15,11 @@ import requests
 import import_tigris
 
 
-def import_issue_status(tigris_issue, gh_issue):
-    '''Map between Tigris issue status and the states on GitHub.'''
-    status = tigris_issue.xpath('issue_status')[0].text
-    state = 'closed' if status in (
-        'RESOLVED', 'CLOSED', 'VERIFIED') else 'open'
-    gh_issue.edit(state=state)
-
-
-def import_priority(tigris_issue, gh_issue):
-    '''Import the issue's priority, if set.'''
-    priority = tigris_issue.xpath('priority')[0].text
-    if priority:
-        gh_issue.add_to_labels(priority)
-
-
-def import_resolution(tigris_issue, gh_issue):
-    '''Map between Tigris resolutions and the default labels on GitHub.'''
-    resolution_map = {
-        'DUPLICATE': 'duplicate',
-        'INVALID': 'invalid',
-        'WONTFIX': 'wontfix'
-    }
-    label = resolution_map.get(tigris_issue.xpath('resolution')[0].text)
-    if label:
-        gh_issue.add_to_labels(label)
-
-
-def import_assigned_to(tigris_issue, gh_issue):
-    pass
-
-
-def import_reporter(tigris_issue, gh_issue):
-    '''Prefix the issue's description with the reporter.'''
-    reporter = tigris_issue.xpath('reporter')[0].text
-    if reporter:
-        gh_issue.edit(body='This issue was reported by: `' +
-                      reporter + '`.\r\n' + gh_issue.body)
-
-
-def import_target_milestone(tigris_issue, gh_issue):
-    '''Associate the GitHub issue with a milestone if the Tigris issue has one.'''
+def get_target_milestone(tigris_issue, gh_issue):
+    '''Get a GitHub milestone if the Tigris issue has one.'''
+    milestone = None
     tigris_milestone = tigris_issue.xpath('target_milestone')[0].text
     if tigris_milestone != '-unspecified-':
-        milestone = None
         for m in gh_issue.repository.get_milestones():
             if m.title == tigris_milestone:
                 milestone = m
@@ -66,24 +27,7 @@ def import_target_milestone(tigris_issue, gh_issue):
         if not milestone:
             milestone = gh_issue.repository.create_milestone(
                 tigris_milestone, description="Created automatically")
-        gh_issue.edit(milestone=milestone)
-
-
-def import_issue_type(tigris_issue, gh_issue):
-    '''Map between Tigris issue_type and the default labels on GitHub.'''
-    type_map = {
-        'DEFECT': 'bug',
-        'ENHANCEMENT': 'enhancement'
-    }
-    label = type_map.get(tigris_issue.xpath('issue_type')[0].text)
-    if label:
-        gh_issue.add_to_labels(label)
-
-
-def import_creation_ts(tigris_issue, gh_issue):
-    creation_ts = tigris_issue.xpath('creation_ts')[0].text
-    gh_issue.edit(body='This issue was originally created at: ' +
-                  creation_ts + '.\r\n' + gh_issue.body)
+    return milestone
 
 
 def import_issue_file_loc(tigris_issue, gh_issue):
@@ -102,32 +46,53 @@ def import_votes(tigris_issue, gh_issue):
                       '\r\nVotes for this issue: ' + votes[0].text + '.\r\n')
 
 
-def add_non_default_labels(tigris_issue, gh_issue):
+def get_keyword_labels(tigris_issue):
+    '''Create a label for each keyword.'''
+    # There can be many keywords fields, each containing comma-separated values.
     labels = []
+    if len(tigris_issue.xpath('keywords')) > 0:
+        for keywords in tigris_issue.xpath('keywords'):
+            for keyword in keywords:
+                if keyword.text:
+                    labels.append(keyword.text.split(',').strip())
+    return labels
+
+
+def get_labels(tigris_issue):
+    labels = get_keyword_labels(tigris_issue)
     for field_name, default_value in (
         ('component', 'scons'),
         ('version', '-unspecified-'),
         ('rep_platform', 'All'),
         ('subcomponent', 'scons'),
         ('op_sys', 'All')
-        ):
+    ):
         field_value = tigris_issue.xpath(field_name)[0].text
         if field_value and (field_value != default_value):
-            labels.append(str(field_name.replace('_', ' ').title() + ': ' + field_value))
-    gh_issue.add_to_labels(*labels)
-
-
-def import_keywords(tigris_issue, gh_issue):
-    '''Add a label for each keyword.'''
-    # There can be many keywords fields, each containing comma-separated values.
-    if len(tigris_issue.xpath('keywords')) > 0:
-        labels = []
-        for keywords in tigris_issue.xpath('keywords'):
-            for keyword in keywords:
-                if keyword.text:
-                    labels.append(keyword.text.split(',').strip())
-        if labels:
-            gh_issue.add_to_labels(*labels)
+            labels.append(str(field_name.replace(
+                '_', ' ').title() + ': ' + field_value))
+    priority = tigris_issue.xpath('priority')[0].text
+    if priority:
+        labels.append(priority)
+    # Map between Tigris issue_type and the default labels on GitHub.
+    type_map = {
+        'DEFECT': 'bug',
+        'ENHANCEMENT': 'enhancement'
+    }
+    issue_type = type_map.get(tigris_issue.xpath('issue_type')[0].text)
+    if issue_type:
+        labels.append(issue_type)
+    # Map between Tigris resolutions and the default labels on GitHub.
+    resolution_map = {
+        'DUPLICATE': 'duplicate',
+        'INVALID': 'invalid',
+        'WONTFIX': 'wontfix'
+    }
+    resolution_map = resolution_map.get(
+        tigris_issue.xpath('resolution')[0].text)
+    if resolution_map:
+        labels.append(resolution_map)
+    return labels
 
 
 def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
@@ -142,6 +107,7 @@ def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
         suffix += ' at ' + field.xpath('when')[0].text + '.\r\n'
     return suffix
 
+
 def add_relationships(tigris_issue, gh_issue):
     suffix = ''
     for field_name, relationship in (
@@ -150,7 +116,8 @@ def add_relationships(tigris_issue, gh_issue):
         ('is_duplicate', ' is a duplicate of'),
         ('has_duplicates', 'is duplicated by'),
     ):
-        suffix += get_relationship_text(tigris_issue, gh_issue, field_name, relationship)
+        suffix += get_relationship_text(tigris_issue,
+                                        gh_issue, field_name, relationship)
     if suffix:
         gh_issue.edit(body=gh_issue.body + suffix)
 
@@ -160,7 +127,8 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
     https://developer.github.com/v3/repos/contents/.
     '''
     suffix = ''
-    url_prefix = '/'.join(('https://api.github.com/repos', user, attachment_repo, 'contents'))
+    url_prefix = '/'.join(('https://api.github.com/repos',
+                           user, attachment_repo, 'contents'))
     sorted_attachments = sorted(tigris_issue.xpath(
         'attachment'), key=lambda x: x.xpath('date')[0].text)
     for attachment in sorted_attachments:
@@ -218,8 +186,16 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
             # Someone's created an issue whilst we working, overwrite theirs.
             gh_issue = repo.get_issue(issue_id)
 
+    state = 'open'
+    if tigris_issue.xpath('issue_status')[0].text in ('RESOLVED', 'CLOSED', 'VERIFIED'):
+        state = 'closed'
     # Create the initial body of the issue.
-    body = ''
+    body = 'This issue was originally created at: ' + \
+        tigris_issue.xpath('creation_ts')[0].text + '.\r\n'
+    reporter = tigris_issue.xpath('reporter')[0].text
+    if reporter:
+        body += 'This issue was reported by: `' + reporter + '`.\r\n'
+
     sorted_long_descs = sorted(tigris_issue.xpath(
         'long_desc'), key=lambda x: x.xpath('issue_when')[0].text)
     for long_desc in sorted_long_descs:
@@ -231,22 +207,18 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
             long_desc_text = 'No text was provided with this entry.'
         body += '\r\n>' + html.unescape(long_desc_text)
         body += '\r\n\r\n'
-    gh_issue.edit(title=title, body=body)
+    gh_issue.edit(
+        title=title,
+        body=body,
+        state=state,
+        milestone=get_target_milestone(tigris_issue, gh_issue),
+        labels=get_labels(tigris_issue)
+    )
 
     # Each function maps to a field in the Tigris issue, based on the DTD at
     # http://scons.tigris.org/issues/issuezilla.dtd
-    import_issue_status(tigris_issue, gh_issue)
-    import_priority(tigris_issue, gh_issue)
-    import_resolution(tigris_issue, gh_issue)
-    add_non_default_labels(tigris_issue, gh_issue)
-    import_assigned_to(tigris_issue, gh_issue)
-    import_reporter(tigris_issue, gh_issue)
-    import_target_milestone(tigris_issue, gh_issue)
-    import_issue_type(tigris_issue, gh_issue)
-    import_creation_ts(tigris_issue, gh_issue)
     import_issue_file_loc(tigris_issue, gh_issue)
     import_votes(tigris_issue, gh_issue)
-    import_keywords(tigris_issue, gh_issue)
 
     import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo)
 
