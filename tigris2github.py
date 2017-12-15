@@ -6,6 +6,7 @@ import glob
 import html
 import json
 import tempfile
+import time
 
 from github import Github, UnknownObjectException
 import lxml
@@ -246,12 +247,24 @@ def main():
                                    )
             for tigris_issue in sorted_issues:
                 print(tigris_issue.xpath('issue_id')[0].text)
-                import_to_github(tigris_issue, issue_repo, user, passwd, attachment_repo)
+                reset_time = gh.rate_limiting_resettime
+                print(gh.rate_limiting, gh.rate_limiting_resettime, gh.rate_limiting[0])
+                if gh.rate_limiting[0] < 20:
+                    delay = 10 + (reset_time - time.time())
+                    print('Waiting ' + str(delay) + 's for rate limit to reset.') 
+                    time.sleep(delay)
+                import_to_github(tigris_issue, issue_repo,
+                                 user, passwd, attachment_repo)
     # Now all the issues are in imported add the relationships between them.
     for issue_group_file in glob.glob('xml/*.xml'):
         with open(issue_group_file, 'rb') as f_in:
             issues_xml = lxml.etree.XML(f_in.read())
             for tigris_issue in issues_xml:
+                reset_time = gh.rate_limiting_resettime
+                if gh.rate_limiting[0] < 20:
+                    delay = 10 + (reset_time - time.time())
+                    print('Waiting ' + delay + 's for rate limit to reset.') 
+                    time.sleep(delay)
                 add_relationships(tigris_issue, issue_repo)
 
 
