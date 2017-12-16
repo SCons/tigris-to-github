@@ -226,7 +226,12 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
         long_desc_text = long_desc.xpath('thetext')[0].text
         if not long_desc_text:
             long_desc_text = 'No text was provided with this entry.'
-        body += '\r\n>' + html.unescape(long_desc_text)
+        unescaped_long_desc_text = html.unescape(long_desc_text)
+        for line in unescaped_long_desc_text.splitlines():
+            if not line:
+                # GitHub's markdown doesn't tolerate empty quote lines.
+                line = ' '
+            body += '\r\n>' + line
         body += '\r\n\r\n'
     gh_issue.edit(
         title=title,
