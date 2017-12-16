@@ -150,8 +150,18 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
             suffix += '>' + desc + '\r\n'
 
         # Copy the attachment to a temporary file, and upload to GitHub.
+        # Tigris can be flakey, so retry with a delay if the connection 
+        # closed by Tigris.
         src_url = attachment.xpath('attachment_iz_url')[0].text
-        r = requests.get(src_url, stream=True)
+        num_retries = 0 
+        while num_retries < 10:
+            try:
+                r = requests.get(src_url, stream=True)
+                break
+            except Exception as e:
+                print(e)
+                num_retries += 1
+                time.sleep(5)
         with tempfile.TemporaryFile() as fd:
             for chunk in r.iter_content(chunk_size=128):
                 fd.write(chunk)
