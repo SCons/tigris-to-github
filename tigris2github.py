@@ -110,6 +110,7 @@ def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
 
 
 def add_relationships(tigris_issue, gh_issue):
+    '''Add the relationships between issues to GitHub.'''
     suffix = ''
     for field_name, relationship in (
         ('dependson', 'depends on'),
@@ -181,6 +182,9 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
     try:
         gh_issue = repo.get_issue(issue_id)
     except UnknownObjectException:
+        # Sleep here to follow GitHub's guideline to wait a second between requests. See
+        # https://developer.github.com/v3/guides/best-practices-for-integrators/#dealing-with-abuse-rate-limits
+        time.sleep(1)
         gh_issue = repo.create_issue(title)
         if gh_issue.number != issue_id:
             print(issue_id, gh_issue.number)
@@ -246,26 +250,43 @@ def main():
                                        x.xpath('issue_id')[0].text)
                                    )
             for tigris_issue in sorted_issues:
-                print(tigris_issue.xpath('issue_id')[0].text)
+                issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+                print(issue_id)
                 reset_time = gh.rate_limiting_resettime
-                print(gh.rate_limiting, gh.rate_limiting_resettime, gh.rate_limiting[0])
-                if gh.rate_limiting[0] < 20:
+                if gh.rate_limiting[0] < 10:
                     delay = 10 + (reset_time - time.time())
                     print('Waiting ' + str(delay) + 's for rate limit to reset.') 
                     time.sleep(delay)
-                import_to_github(tigris_issue, issue_repo,
-                                 user, passwd, attachment_repo)
+                # Even though we're respecting the rate limit, and GitHub says at
+                # https://developer.github.com/v3/#abuse-rate-limits that this is sufficient,
+                # we still sometimes hit Abuse Rate Limit. If this happens, wait with 
+                # increasing delay and retry. 
+                num_retries = 0 
+                while num_retries < 10:
+                    try:
+                        import_to_github(tigris_issue, issue_repo,
+                                        user, passwd, attachment_repo)
+                        break
+                    except Exception as e:
+                        print(e)
+                        num_retries += 1
+                        time.sleep(60 * num_retries)
+                # Ensure that there's a second delay between successive API calls.
+                time.sleep(1)
     # Now all the issues are in imported add the relationships between them.
     for issue_group_file in glob.glob('xml/*.xml'):
         with open(issue_group_file, 'rb') as f_in:
             issues_xml = lxml.etree.XML(f_in.read())
             for tigris_issue in issues_xml:
+                issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+                print(issue_id)
                 reset_time = gh.rate_limiting_resettime
-                if gh.rate_limiting[0] < 20:
+                if gh.rate_limiting[0] < 10:
                     delay = 10 + (reset_time - time.time())
                     print('Waiting ' + delay + 's for rate limit to reset.') 
                     time.sleep(delay)
                 add_relationships(tigris_issue, issue_repo)
+                time.sleep(1)
 
 
 if __name__ == '__main__':
