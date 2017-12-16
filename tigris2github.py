@@ -299,12 +299,13 @@ def main():
             for tigris_issue in issues_xml:
                 issue_id = int(tigris_issue.xpath('issue_id')[0].text)
                 print(issue_id)
+                gh_issue = issue_repo.get_issue(issue_id)
                 reset_time = gh.rate_limiting_resettime
                 if gh.rate_limiting[0] < 10:
                     delay = 10 + (reset_time - time.time())
                     print('Waiting ' + delay + 's for rate limit to reset.')
                     time.sleep(delay)
-                add_relationships(tigris_issue, issue_repo)
+                add_relationships(tigris_issue, gh_issue)
                 time.sleep(1)
 
 
