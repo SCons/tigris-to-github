@@ -145,9 +145,10 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
             who = 'An anonymous user'
         url_suffix = attachid + '/' + filename
         dest_url = url_prefix + '/' + url_suffix
-
+        comment_url = '/'.join(('https://github.com',
+                                user, attachment_repo, 'blob/master', url_suffix))
         suffix += '\r\n' + who
-        suffix += ' attached [' + filename + '](' + dest_url + ')'
+        suffix += ' attached [' + filename + '](' + comment_url + ')'
         suffix += ' at ' + attachment.xpath('date')[0].text + '.\r\n'
         desc = attachment.xpath('desc')[0].text
         if desc:
