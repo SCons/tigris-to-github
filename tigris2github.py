@@ -35,8 +35,11 @@ def import_issue_file_loc(tigris_issue, gh_issue):
     '''optional'''
     issue_file_loc = tigris_issue.xpath('issue_file_loc')
     if issue_file_loc and issue_file_loc[0].text:
-        gh_issue.edit(body=gh_issue.body + '\r\nMore information about this issue is at ' +
-                      issue_file_loc[0].text + '.\r\n')
+        gh_issue.edit(
+            body=gh_issue.body +
+            '\r\nMore information about this issue is at ' +
+            issue_file_loc[0].text +
+            '.\r\n')
 
 
 def import_votes(tigris_issue, gh_issue):
@@ -49,7 +52,8 @@ def import_votes(tigris_issue, gh_issue):
 
 def get_keyword_labels(tigris_issue):
     '''Create a label for each keyword.'''
-    # There can be many keywords fields, each containing comma-separated values.
+    # There can be many keywords fields, each containing comma-separated
+    # values.
     labels = []
     if len(tigris_issue.xpath('keywords')) > 0:
         for keywords in tigris_issue.xpath('keywords'):
@@ -150,10 +154,10 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
             suffix += '>' + desc + '\r\n'
 
         # Copy the attachment to a temporary file, and upload to GitHub.
-        # Tigris can be flakey, so retry with a delay if the connection 
+        # Tigris can be flakey, so retry with a delay if the connection
         # closed by Tigris.
         src_url = attachment.xpath('attachment_iz_url')[0].text
-        num_retries = 0 
+        num_retries = 0
         while num_retries < 10:
             try:
                 r = requests.get(src_url, stream=True)
@@ -202,7 +206,8 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
             gh_issue = repo.get_issue(issue_id)
 
     state = 'open'
-    if tigris_issue.xpath('issue_status')[0].text in ('RESOLVED', 'CLOSED', 'VERIFIED'):
+    if tigris_issue.xpath('issue_status')[0].text in (
+            'RESOLVED', 'CLOSED', 'VERIFIED'):
         state = 'closed'
     # Create the initial body of the issue.
     body = 'This issue was originally created at: ' + \
@@ -265,23 +270,27 @@ def main():
                 reset_time = gh.rate_limiting_resettime
                 if gh.rate_limiting[0] < 10:
                     delay = 10 + (reset_time - time.time())
-                    print('Waiting ' + str(delay) + 's for rate limit to reset.') 
+                    print(
+                        'Waiting ' +
+                        str(delay) +
+                        's for rate limit to reset.')
                     time.sleep(delay)
                 # Even though we're respecting the rate limit, and GitHub says at
                 # https://developer.github.com/v3/#abuse-rate-limits that this is sufficient,
-                # we still sometimes hit Abuse Rate Limit. If this happens, wait with 
-                # increasing delay and retry. 
-                num_retries = 0 
+                # we still sometimes hit Abuse Rate Limit. If this happens, wait with
+                # increasing delay and retry.
+                num_retries = 0
                 while num_retries < 10:
                     try:
                         import_to_github(tigris_issue, issue_repo,
-                                        user, passwd, attachment_repo)
+                                         user, passwd, attachment_repo)
                         break
                     except Exception as e:
                         print(e)
                         num_retries += 1
                         time.sleep(60 * num_retries)
-                # Ensure that there's a second delay between successive API calls.
+                # Ensure that there's a second delay between successive API
+                # calls.
                 time.sleep(1)
     # Now all the issues are in imported add the relationships between them.
     for issue_group_file in glob.glob('xml/*.xml'):
@@ -293,7 +302,7 @@ def main():
                 reset_time = gh.rate_limiting_resettime
                 if gh.rate_limiting[0] < 10:
                     delay = 10 + (reset_time - time.time())
-                    print('Waiting ' + delay + 's for rate limit to reset.') 
+                    print('Waiting ' + delay + 's for rate limit to reset.')
                     time.sleep(delay)
                 add_relationships(tigris_issue, issue_repo)
                 time.sleep(1)
