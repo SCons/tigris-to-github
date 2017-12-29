@@ -260,7 +260,7 @@ def main():
     gh = Github(user, passwd)
     # Assume that the 'organization' associated with the repos is the user.
     # TODO relax this constraint.
-    issue_repo = gh.get_user().get_repo(input("GitHub repository for issues: "))
+    issue_repo = gh.get_repo(input("GitHub repository for issues: "))
     attachment_repo = input("GitHub repository for attachments: ")
     assert issue_repo.has_issues
     for issue_group_file in glob.glob('xml/*.xml'):
