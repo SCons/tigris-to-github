@@ -1,3 +1,11 @@
+# How to use
+
+1. virtualenv-3.6 venv3
+1. venv3/bin/activate
+1. pip install -r requirements.txt
+1. python tigris2github.py
+1. Answer Questions
+
 # tigris-to-github
 Tool to migrate tigris bugs to github.
 
