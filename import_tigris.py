@@ -21,15 +21,16 @@ This script needs the following steps to work:
 
 And you're done!
 """
+import requests
 
+from urllib.request import urlopen
 import sys
 import os
 import glob
 import lxml
 import lxml.etree
-from urllib2 import urlopen
 import base64
-import xmlrpclib
+import xmlrpc
 import csv
 
 # ---------------------------------------------------------
@@ -84,18 +85,14 @@ def issue_exists(id, url):
         @param url Base URL to the project's xml.cgi (no params attached!)
         @return `True` if the issue exists, `False` if not
     """
-    query_url = url + '?include_attachments=false&id=%d' % id
-    try:
-        issues_xml = lxml.etree.XML(urlopen(query_url).read())
-        for issue in issues_xml.xpath('issue'):
-            error = issue.attrib.get('status_code', None)
-            if error and error == "404":
-                return False
-            else:
-                return True
-    except:
-        pass
-
+    r = requests.get(url, params={'include_attachments': 'false', 'id': str(id)})
+    issues_xml = lxml.etree.XML(bytes(r.text, encoding=r.encoding))
+    for issue in issues_xml.xpath('issue'):
+        error = issue.attrib.get('status_code', None)
+        if error and error == "404":
+            return False
+        else:
+            return True
     return False
 
 
@@ -154,7 +151,7 @@ def get_number_of_issues(url, start_id=1, BSEARCH_STEP_SIZE=1024):
 
 
 def download_xmls_for_bugs(query_url, start_id, max_id, outdir, AT_A_TIME=50):
-    print "Downloading XML data %d-%d to '%s'..." % (start_id, max_id, outdir)
+    print("Downloading XML data %d-%d to '%s'..." % (start_id, max_id, outdir))
     if AT_A_TIME < 1:
         AT_A_TIME = 1
     first_n = start_id
@@ -164,23 +161,22 @@ def download_xmls_for_bugs(query_url, start_id, max_id, outdir, AT_A_TIME=50):
         # Ensure that no "overflow" at the end of the interval occurs
         if rest > max_id:
             rest = max_id
-        print "%d-%d -> %d.xml" % (first_n, rest, file)
+        print("%d-%d -> %02d.xml" % (first_n, rest, file))
         # Create a single URL to fetch all the bug data.
         if first_n < rest:
             ids = '%d-%d' % (first_n, rest)
         else:
             ids = '%d' % first_n
-        big_url = query_url + '?include_attachments=true&id=%s' % ids
-        content = urlopen(big_url).read()
-        with open(os.path.join(outdir, "%d.xml" % file), "w") as fout:
-            fout.write(content)
+        r = requests.post(query_url, data={'download_filename': 'issues.xml', 'include_attachments': 'false', 'id': ids})
+        with open(os.path.join(outdir, "%02d.xml" % file), "wb") as fout:
+            fout.write(bytes(r.text, encoding=r.encoding))
 
         # Update the 'rest' of the work
         first_n += AT_A_TIME
         rest += AT_A_TIME
         file += 1
 
-    print "\nDone.\n"
+    print("\nDone.\n")
 
 
 def fetch_files(project, outdir):
@@ -191,7 +187,7 @@ def fetch_files(project, outdir):
     query_url = "http://%s.tigris.org/issues/xml.cgi" % project.lower()
     start_id = 1
     # Get the number of issues
-    print "Probing ID of last issue..."
+    print("Probing ID of last issue...")
     max_id = get_number_of_issues(query_url, start_id)
 
     # Downloading information about those bugs.
@@ -292,7 +288,7 @@ def create_file(xmlrpc_server, att, user_map):
     if not submitting_username:
         submitting_username = "unknown"
     
-    print "Pushing file %s with length %d" % (filename, len(data))
+    print("Pushing file %s with length %d" % (filename, len(data)))
     return xmlrpc_server.create('file', 
                                 'name=%s' % filename,
                                 'type=%s' % mimetype,
@@ -399,7 +395,7 @@ def timetuple_from_tigris_ts(tigris_ts):
 
 def push_issue(xmlrpc_server, issue, user_map, keyword_map, fi, fm, ff):
     issue_id = get_tag_text_from_xml(issue, "issue_id")
-    print "Id:", issue_id
+    print("Id:", issue_id)
     
     # Create messages
     msglist = []
@@ -506,10 +502,10 @@ def import_xml(xmlrpc_url, file_dir):
                                                             'realname=%s' % row[1],
                                                             'roles=User')  # %s' % row[2])
                 cnt += 1
-            print "Added %d users from fullname.csv." % (cnt-1)
+            print("Added %d users from fullname.csv." % (cnt-1))
 
         # Collect users
-        print "Pushing keywords and user IDs..."
+        print("Pushing keywords and user IDs...")
         for fpath in natsorted(xfiles):
             with open(fpath, "r") as f:
                 try:
@@ -529,10 +525,10 @@ def import_xml(xmlrpc_url, file_dir):
                 except:
                     pass
         
-        print "Users: %d" % len(user_map)
-        print "Keywords: %d\n" % len(keyword_map)
+        print("Users: %d" % len(user_map))
+        print("Keywords: %d\n" % len(keyword_map))
         # Push files, messages and issues
-        print "Pushing ALL the things!"
+        print("Pushing ALL the things!")
         # Open files for keeping track of the original creation and "last
         # activity" dates...these are used for the "patch" stage (see below).
         fi = open("issue_dates.csv","w")
@@ -625,14 +621,14 @@ def patch_files(roundup_dir, file_dir):
     date_messages = {}
     if xfiles:
         # Process CSV files
-        print "Reading CSV files"
+        print("Reading CSV files")
         read_dates("issue_dates.csv", date_issues)
         read_dates("msg_dates.csv", date_messages)
         read_dates("file_dates.csv", date_files)
 
-    print "Issues: %d" % len(date_issues)
-    print "Messages: %d" % len(date_messages)
-    print "Files: %d" % len(date_files)
+    print("Issues: %d" % len(date_issues))
+    print("Messages: %d" % len(date_messages))
+    print("Files: %d" % len(date_files))
         
     # Change back to original directory
     os.chdir(oldwd)
@@ -640,7 +636,7 @@ def patch_files(roundup_dir, file_dir):
     os.chdir(roundup_dir)
 
     # Patch exported CSV files
-    print "Patching Roundup files"
+    print("Patching Roundup files")
     patch_roundup_file("file.csv", date_files, touched_col=0, created_col=2, id_col=4)
     patch_roundup_file("issue.csv", date_issues, touched_col=0, created_col=3, id_col=6)
     patch_roundup_file("msg.csv", date_messages, touched_col=0, created_col=3, id_col=7)
@@ -649,10 +645,10 @@ def patch_files(roundup_dir, file_dir):
     os.chdir(oldwd)
 
 def usage():
-    print "Usage: import_tigris.py <push|files|patch> options"
-    print "For 'push' give the URL of the xmlrpc server and the XML directory, e.g. http://demo:demo@localhost:8917/demo/xmlrpc tigris_export"
-    print "For 'files' give the project name and the output directory, e.g. scons tigris_export"
-    print "For 'patch' give the roundup export folder and the XML output directory, e.g. roundup_export tigris_export"
+    print("Usage: import_tigris.py <push|files|patch> options")
+    print("For 'push' give the URL of the xmlrpc server and the XML directory, e.g. http://demo:demo@localhost:8917/demo/xmlrpc tigris_export")
+    print("For 'files' give the project name and the output directory, e.g. scons tigris_export")
+    print("For 'patch' give the roundup export folder and the XML output directory, e.g. roundup_export tigris_export")
 
 def main():
     if len(sys.argv) < 2:
