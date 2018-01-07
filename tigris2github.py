@@ -100,7 +100,7 @@ def get_labels(tigris_issue):
     return labels
 
 
-def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
+def get_relationship_text(tigris_issue, gh_issue, gh_issue_offset, field_name, relationship):
     suffix = ''
     field_name = 'dependson'
     sorted_fields = sorted(tigris_issue.xpath(
@@ -108,12 +108,12 @@ def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
     for field in sorted_fields:
         suffix += '\r\n' + field.xpath('who')[0].text
         suffix += ' said this issue ' + relationship + ' #'
-        suffix += field.xpath('issue_id')[0].text
+        suffix += str(int(field.xpath('issue_id')[0].text) + gh_issue_offset)
         suffix += ' at ' + field.xpath('when')[0].text + '.\r\n'
     return suffix
 
 
-def add_relationships(tigris_issue, gh_issue):
+def add_relationships(tigris_issue, gh_issue, gh_issue_offset):
     '''Add the relationships between issues to GitHub.'''
     suffix = ''
     for field_name, relationship in (
@@ -122,8 +122,8 @@ def add_relationships(tigris_issue, gh_issue):
         ('is_duplicate', ' is a duplicate of'),
         ('has_duplicates', 'is duplicated by'),
     ):
-        suffix += get_relationship_text(tigris_issue,
-                                        gh_issue, field_name, relationship)
+        suffix += get_relationship_text(tigris_issue, gh_issue,
+                                        gh_issue_offset, field_name, relationship)
     if suffix:
         gh_issue.edit(body=gh_issue.body + suffix)
 
@@ -182,16 +182,19 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
         gh_issue.edit(body=gh_issue.body + suffix)
 
 
-def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
+def import_to_github(tigris_issue, repo, gh_issue_offset, user, passwd, attachment_repo):
     '''Import a single Tigris issue into a GitHub repo.
 
     :param tigris_issue: The source issue
     :param repo: The destination GitHub repository for issues
+    :param gh_issue_offset: Offset of issues in GitHub relative to Tigris issue IDs.
+                         tigris issue ID + gh_issue_offset = GitHub issue ID
     :param user: GitHub username
     :param passwd: GitHub password
     :param attachment_repo: The destination GitHub repository for attachments
     '''
-    issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+    tigris_issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+    issue_id = tigris_issue_id + gh_issue_offset
     title = html.unescape(tigris_issue.xpath('short_desc')[0].text)
     # Overwrite an existing issue, if present.
     try:
@@ -263,6 +266,13 @@ def main():
     issue_repo = gh.get_repo(input("GitHub repository for issues: "))
     attachment_repo = input("GitHub repository for attachments: ")
     assert issue_repo.has_issues
+    # GitHub's numbering treats issues and pull requests as the same thing.
+    # use the number of pull requests to determine what an issue's ID should
+    # be on GitHub.
+    pull_requests = issue_repo.get_pulls(state='all', direction='desc')
+    issue_offset = 0
+    if pull_requests:
+        issue_offset = pull_requests[0].number
     for issue_group_file in glob.glob('xml/*.xml'):
         with open(issue_group_file, 'rb') as f_in:
             issues_xml = lxml.etree.XML(f_in.read())
@@ -288,7 +298,7 @@ def main():
                 num_retries = 0
                 while num_retries < 10:
                     try:
-                        import_to_github(tigris_issue, issue_repo,
+                        import_to_github(tigris_issue, issue_repo, issue_offset,
                                          user, passwd, attachment_repo)
                         break
                     except Exception as e:
@@ -305,13 +315,13 @@ def main():
             for tigris_issue in issues_xml:
                 issue_id = int(tigris_issue.xpath('issue_id')[0].text)
                 print(issue_id)
-                gh_issue = issue_repo.get_issue(issue_id)
+                gh_issue = issue_repo.get_issue(issue_id + issue_offset)
                 reset_time = gh.rate_limiting_resettime
                 if gh.rate_limiting[0] < 10:
                     delay = 10 + (reset_time - time.time())
                     print('Waiting ' + delay + 's for rate limit to reset.')
                     time.sleep(delay)
-                add_relationships(tigris_issue, gh_issue)
+                add_relationships(tigris_issue, gh_issue, issue_offset)
                 time.sleep(1)
 
 
