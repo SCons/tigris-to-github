@@ -102,7 +102,6 @@ def get_labels(tigris_issue):
 
 def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
     suffix = ''
-    field_name = 'dependson'
     sorted_fields = sorted(tigris_issue.xpath(
         field_name), key=lambda x: x.xpath('when')[0].text)
     for field in sorted_fields:
