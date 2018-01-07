@@ -134,7 +134,7 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
     '''
     suffix = ''
     url_prefix = '/'.join(('https://api.github.com/repos',
-                           user, attachment_repo, 'contents'))
+                           attachment_repo, 'contents'))
     sorted_attachments = sorted(tigris_issue.xpath(
         'attachment'), key=lambda x: x.xpath('date')[0].text)
     for attachment in sorted_attachments:
@@ -146,7 +146,7 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
         url_suffix = attachid + '/' + filename
         dest_url = url_prefix + '/' + url_suffix
         comment_url = '/'.join(('https://github.com',
-                                user, attachment_repo, 'blob/master', url_suffix))
+                                attachment_repo, 'blob/master', url_suffix))
         suffix += '\r\n' + who
         suffix += ' attached [' + filename + '](' + comment_url + ')'
         suffix += ' at ' + attachment.xpath('date')[0].text + '.\r\n'
