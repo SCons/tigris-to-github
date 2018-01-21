@@ -206,10 +206,12 @@ def import_to_github(tigris_issue, repo, gh_issue_offset, user, passwd, attachme
         # https://developer.github.com/v3/guides/best-practices-for-integrators/#dealing-with-abuse-rate-limits
         time.sleep(1)
         gh_issue = repo.create_issue(title)
-        if gh_issue.number != issue_id:
-            print(issue_id, gh_issue.number)
-            # Someone's created an issue whilst we working, overwrite theirs.
-            gh_issue = repo.get_issue(issue_id)
+    time.sleep(1)
+    print('Importing Tigris issue {} as new issue {}: "{}"'.format(tigris_issue_id, issue_id, title))
+    if gh_issue.number != issue_id:
+        print(issue_id, gh_issue.number)
+        # Someone's created an issue whilst we working, overwrite theirs.
+        gh_issue = repo.get_issue(issue_id)
 
     state = 'open'
     if tigris_issue.xpath('issue_status')[0].text in (
