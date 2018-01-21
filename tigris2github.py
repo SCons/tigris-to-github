@@ -105,6 +105,9 @@ def get_relationship_text(tigris_issue, gh_issue, gh_issue_offset, field_name, r
     sorted_fields = sorted(tigris_issue.xpath(
         field_name), key=lambda x: x.xpath('when')[0].text)
     for field in sorted_fields:
+        if not field.xpath('issue_id')[0].text:
+            # Some relationships are empty, so skip over them.
+            continue
         suffix += '\r\n' + field.xpath('who')[0].text
         suffix += ' said this issue ' + relationship + ' #'
         suffix += str(int(field.xpath('issue_id')[0].text) + gh_issue_offset)
