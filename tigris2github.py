@@ -5,6 +5,7 @@ import getpass
 import glob
 import html
 import json
+import re
 import tempfile
 import time
 
@@ -14,6 +15,10 @@ import lxml.etree
 import requests
 
 import import_tigris
+
+def escape_issue_markdown_repl(matchobj):
+    '''Prevent issue-like text in Tigris issues from incorrectly linking issues.'''
+    return '#<span></span>' + matchobj.group(1)
 
 
 def get_target_milestone(tigris_issue, gh_issue):
@@ -235,7 +240,11 @@ def import_to_github(tigris_issue, repo, gh_issue_offset, user, passwd, attachme
             long_desc_text = 'No text was provided with this entry.'
         unescaped_long_desc_text = html.unescape(long_desc_text)
         for line in unescaped_long_desc_text.splitlines():
-            if not line:
+            if line:
+                # Edit anything of the form '#number' as this is parsed by 
+                # GitHub's markdown as a link to another issue.
+                line = re.sub(r'#(\d+)', escape_issue_markdown_repl, line)
+            else:
                 # GitHub's markdown doesn't tolerate empty quote lines.
                 line = ' '
             body += '\r\n>' + line
