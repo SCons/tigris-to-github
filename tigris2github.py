@@ -1,5 +1,7 @@
 #!/bin/env/python
 
+import sys
+import argparse
 import base64
 import getpass
 import glob
@@ -8,6 +10,7 @@ import json
 import re
 import tempfile
 import time
+import pprint
 
 from github import Github, UnknownObjectException
 import lxml
@@ -15,6 +18,8 @@ import lxml.etree
 import requests
 
 import import_tigris
+
+my_printer = pp = pprint.PrettyPrinter(indent=4)
 
 def escape_issue_markdown_repl(matchobj):
     '''Prevent issue-like text in Tigris issues from incorrectly linking issues.'''
@@ -264,78 +269,166 @@ def import_to_github(tigris_issue, repo, gh_issue_offset, user, passwd, attachme
 
     import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo)
 
+def build_tigris_to_github_map(max_tigris_id, issue_repo):
+    """
+    It's necessary to create a mapping because GitHub shares the issue and pull
+    request numbers. So if there's a pull request 1, there cannot be a issue 1.
+
+    :param max_tigris_id: Highest numbered bug in tigris bug tracker
+    :param issue_repo: handle to access the target issue repo
+    :return: A dictionary mapping the tigris bug ID to the new GitHub issue
+    """
+    mapping = {}
+
+    # Get the numbers of all existing pull requests
+    pull_requests = issue_repo.get_pulls(state='all', direction='desc')
+    pr_numbers = [p.number for p in pull_requests]
+    
+    gh_issues = issue_repo.get_issues(state='all', direction='desc')
+    max_existing_gh = gh_issues[0].number
+
+    current_offset = 1
+    for tid in range(1, max_tigris_id+1):
+        if tid in pr_numbers:
+            mapping[tid] = max_existing_gh + current_offset
+            current_offset += 1
+        else:
+            mapping[tid] = tid
+
+    return (mapping, pr_numbers)
+
+
+def load_all_tigris_issues():
+    """
+    Load all the downloaded tigrix xml files and store in a dictionary
+    keyed by their tigris bug #
+
+    :return: Dictionary with key tigris_id and contents is the xml Element
+    containing all the issue info
+    """
+    mapping = {}
+    for issue_group_file in glob.glob('xml/*.xml'):
+        print("Processing: %s"%issue_group_file)
+        with open(issue_group_file, 'rb') as f_in:
+            issues_xml = lxml.etree.XML(f_in.read())
+            
+            issues = issues_xml.xpath('issue')
+            for issue in issues:
+                issue_id = issue.xpath('issue_id')[0].text
+                mapping[issue_id] = issue
+
+    return mapping
+
+def sanity_check_mapping(mapping, max_tigris_id, pr_numbers):
+    """
+    Do some basic checks and dump info on mapping
+    :param mapping: dictionary mapping tigris id to github issue
+    :param max_tigris_id: max issue # on tigris
+    """
+    mismatches = [(a, b) for (a, b) in mapping.items() if a != b]
+    pr_less_than_max = [p for p in pr_numbers if p < max_tigris_id]
+
+    if len(mismatches) != len(pr_less_than_max):
+        print("Issue %d mismatches, %d Pull requests"%(len(mismatches), len(pr_numbers)))
+    
+        # Dump mapping
+        my_printer.pprint(mismatches)
+
+
+def process_command_line():
+    parser = argparse.ArgumentParser(description="Migrate bugs from tigris bug tracke to Github issues")
+    parser.add_argument('--username', required=True, help="GitHub username")
+    parser.add_argument('--password', required=True, help="GitHub password or Personal access token if 2FA is enabled")
+    parser.add_argument('--repo', required=True, help='Target GitHub Repo for issues form is SCons/SCons (not https...)')
+    parser.add_argument('--attachment_repo', required=True, help='GitHub Repo to copy tigris bug attachements to')
+    parser.add_argument('--skip_import', action='store_true', default=False, help="Skip importing from tigris, use existing local cache")
+    parser.add_argument('--skip_upload_to_github', action='store_false', dest='upload_to_github', 
+                        default=True, help="Upload the tigris bugs to github")
+    parser.add_argument('--sanity_check', action='store_true', default=False, help='Run sanity checks on mapping')
+    args = parser.parse_args()
+
+
+    return args
+
 
 def main():
-    # Export the issues from Tigris as XML into a directory.
-    import_tigris.fetch_files('scons', 'xml')
+    # import pdb; pdb.set_trace()
 
-    # Import the issues into a GitHub repository.
-    # Store any Tigris issue attachments in a (probably different) repository.
-    user = input("GitHub username: ")
-    passwd = getpass.getpass(prompt="GitHub Password: ")
-    gh = Github(user, passwd)
-    # Assume that the 'organization' associated with the repos is the user.
-    # TODO relax this constraint.
-    issue_repo = gh.get_repo(input("GitHub repository for issues: "))
-    attachment_repo = input("GitHub repository for attachments: ")
-    assert issue_repo.has_issues
-    # GitHub's numbering treats issues and pull requests as the same thing.
-    # use the number of pull requests to determine what an issue's ID should
-    # be on GitHub.
-    pull_requests = issue_repo.get_pulls(state='all', direction='desc')
-    issue_offset = 0
-    if pull_requests:
-        issue_offset = pull_requests[0].number
-    for issue_group_file in glob.glob('xml/*.xml'):
-        with open(issue_group_file, 'rb') as f_in:
-            issues_xml = lxml.etree.XML(f_in.read())
-            sorted_issues = sorted(issues_xml.xpath('issue'),
-                                   key=lambda x: int(
-                                       x.xpath('issue_id')[0].text)
-                                   )
-            for tigris_issue in sorted_issues:
-                issue_id = int(tigris_issue.xpath('issue_id')[0].text)
-                print(issue_id)
-                reset_time = gh.rate_limiting_resettime
-                if gh.rate_limiting[0] < 10:
-                    delay = 10 + (reset_time - time.time())
-                    print(
-                        'Waiting ' +
-                        str(delay) +
-                        's for rate limit to reset.')
-                    time.sleep(delay)
-                # Even though we're respecting the rate limit, and GitHub says at
-                # https://developer.github.com/v3/#abuse-rate-limits that this is sufficient,
-                # we still sometimes hit Abuse Rate Limit. If this happens, wait with
-                # increasing delay and retry.
-                num_retries = 0
-                while num_retries < 10:
-                    try:
-                        import_to_github(tigris_issue, issue_repo, issue_offset,
-                                         user, passwd, attachment_repo)
-                        break
-                    except Exception as e:
-                        print(e)
-                        num_retries += 1
-                        time.sleep(60 * num_retries)
-                # Ensure that there's a second delay between successive API
-                # calls.
-                time.sleep(1)
-    # Now all the issues are in imported add the relationships between them.
-    for issue_group_file in glob.glob('xml/*.xml'):
-        with open(issue_group_file, 'rb') as f_in:
-            issues_xml = lxml.etree.XML(f_in.read())
-            for tigris_issue in issues_xml:
-                issue_id = int(tigris_issue.xpath('issue_id')[0].text)
-                print(issue_id)
-                gh_issue = issue_repo.get_issue(issue_id + issue_offset)
-                reset_time = gh.rate_limiting_resettime
-                if gh.rate_limiting[0] < 10:
-                    delay = 10 + (reset_time - time.time())
-                    print('Waiting ' + delay + 's for rate limit to reset.')
-                    time.sleep(delay)
-                add_relationships(tigris_issue, gh_issue, issue_offset)
-                time.sleep(1)
+    max_tigris_id =0
+    args = process_command_line()
+
+    if not args.skip_import:
+        # Export the issues from Tigris as XML into a directory.
+        max_tigris_id = import_tigris.fetch_files('scons', 'xml')
+
+    tigris_issues = load_all_tigris_issues()
+    max_issue_from_files = int(max(tigris_issues.keys(), key=int))
+    max_tigris_id = max(max_tigris_id, max_issue_from_files)
+
+    gh = Github(args.username, args.password)
+
+    issue_repo = gh.get_repo(args.repo)
+    if not issue_repo.has_issues:
+        print("The repo: %s doesn't have issues enabled. Please enable them and rerun")
+        sys.exit(-1)
+
+    (tigris_to_github, pr_numbers) = build_tigris_to_github_map(max_tigris_id, issue_repo)
+
+    if args.sanity_check:
+        sanity_check_mapping(tigris_to_github, max_tigris_id, pr_numbers)
+
+    if args.upload_to_github:
+        for issue_group_file in glob.glob('xml/*.xml'):
+            with open(issue_group_file, 'rb') as f_in:
+                issues_xml = lxml.etree.XML(f_in.read())
+                sorted_issues = sorted(issues_xml.xpath('issue'),
+                                    key=lambda x: int(
+                                        x.xpath('issue_id')[0].text)
+                                    )
+                for tigris_issue in sorted_issues:
+                    issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+                    print(issue_id)
+                    reset_time = gh.rate_limiting_resettime
+                    if gh.rate_limiting[0] < 10:
+                        delay = 10 + (reset_time - time.time())
+                        print(
+                            'Waiting ' +
+                            str(delay) +
+                            's for rate limit to reset.')
+                        time.sleep(delay)
+                    # Even though we're respecting the rate limit, and GitHub says at
+                    # https://developer.github.com/v3/#abuse-rate-limits that this is sufficient,
+                    # we still sometimes hit Abuse Rate Limit. If this happens, wait with
+                    # increasing delay and retry.
+                    num_retries = 0
+                    while num_retries < 10:
+                        try:
+                            import_to_github(tigris_issue, issue_repo, issue_offset,
+                                            user, passwd, args.attachment_repo)
+                            break
+                        except Exception as e:
+                            print(e)
+                            num_retries += 1
+                            time.sleep(60 * num_retries)
+                    # Ensure that there's a second delay between successive API
+                    # calls.
+                    time.sleep(1)
+
+        # Now all the issues are in imported add the relationships between them.
+        for issue_group_file in glob.glob('xml/*.xml'):
+            with open(issue_group_file, 'rb') as f_in:
+                issues_xml = lxml.etree.XML(f_in.read())
+                for tigris_issue in issues_xml:
+                    issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+                    print(issue_id)
+                    gh_issue = issue_repo.get_issue(issue_id + issue_offset)
+                    reset_time = gh.rate_limiting_resettime
+                    if gh.rate_limiting[0] < 10:
+                        delay = 10 + (reset_time - time.time())
+                        print('Waiting ' + delay + 's for rate limit to reset.')
+                        time.sleep(delay)
+                    add_relationships(tigris_issue, gh_issue, issue_offset)
+                    time.sleep(1)
 
 
 if __name__ == '__main__':
