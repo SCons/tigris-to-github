@@ -5,6 +5,7 @@ import getpass
 import glob
 import html
 import json
+import re
 import tempfile
 import time
 
@@ -14,6 +15,10 @@ import lxml.etree
 import requests
 
 import import_tigris
+
+def escape_issue_markdown_repl(matchobj):
+    '''Prevent issue-like text in Tigris issues from incorrectly linking issues.'''
+    return '#<span></span>' + matchobj.group(1)
 
 
 def get_target_milestone(tigris_issue, gh_issue):
@@ -100,20 +105,22 @@ def get_labels(tigris_issue):
     return labels
 
 
-def get_relationship_text(tigris_issue, gh_issue, field_name, relationship):
+def get_relationship_text(tigris_issue, gh_issue, gh_issue_offset, field_name, relationship):
     suffix = ''
-    field_name = 'dependson'
     sorted_fields = sorted(tigris_issue.xpath(
         field_name), key=lambda x: x.xpath('when')[0].text)
     for field in sorted_fields:
+        if not field.xpath('issue_id')[0].text:
+            # Some relationships are empty, so skip over them.
+            continue
         suffix += '\r\n' + field.xpath('who')[0].text
         suffix += ' said this issue ' + relationship + ' #'
-        suffix += field.xpath('issue_id')[0].text
+        suffix += str(int(field.xpath('issue_id')[0].text) + gh_issue_offset)
         suffix += ' at ' + field.xpath('when')[0].text + '.\r\n'
     return suffix
 
 
-def add_relationships(tigris_issue, gh_issue):
+def add_relationships(tigris_issue, gh_issue, gh_issue_offset):
     '''Add the relationships between issues to GitHub.'''
     suffix = ''
     for field_name, relationship in (
@@ -122,8 +129,8 @@ def add_relationships(tigris_issue, gh_issue):
         ('is_duplicate', ' is a duplicate of'),
         ('has_duplicates', 'is duplicated by'),
     ):
-        suffix += get_relationship_text(tigris_issue,
-                                        gh_issue, field_name, relationship)
+        suffix += get_relationship_text(tigris_issue, gh_issue,
+                                        gh_issue_offset, field_name, relationship)
     if suffix:
         gh_issue.edit(body=gh_issue.body + suffix)
 
@@ -134,7 +141,7 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
     '''
     suffix = ''
     url_prefix = '/'.join(('https://api.github.com/repos',
-                           user, attachment_repo, 'contents'))
+                           attachment_repo, 'contents'))
     sorted_attachments = sorted(tigris_issue.xpath(
         'attachment'), key=lambda x: x.xpath('date')[0].text)
     for attachment in sorted_attachments:
@@ -146,7 +153,7 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
         url_suffix = attachid + '/' + filename
         dest_url = url_prefix + '/' + url_suffix
         comment_url = '/'.join(('https://github.com',
-                                user, attachment_repo, 'blob/master', url_suffix))
+                                attachment_repo, 'blob/master', url_suffix))
         suffix += '\r\n' + who
         suffix += ' attached [' + filename + '](' + comment_url + ')'
         suffix += ' at ' + attachment.xpath('date')[0].text + '.\r\n'
@@ -182,16 +189,19 @@ def import_attachment(tigris_issue, gh_issue, user, passwd, attachment_repo):
         gh_issue.edit(body=gh_issue.body + suffix)
 
 
-def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
+def import_to_github(tigris_issue, repo, gh_issue_offset, user, passwd, attachment_repo):
     '''Import a single Tigris issue into a GitHub repo.
 
     :param tigris_issue: The source issue
     :param repo: The destination GitHub repository for issues
+    :param gh_issue_offset: Offset of issues in GitHub relative to Tigris issue IDs.
+                         tigris issue ID + gh_issue_offset = GitHub issue ID
     :param user: GitHub username
     :param passwd: GitHub password
     :param attachment_repo: The destination GitHub repository for attachments
     '''
-    issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+    tigris_issue_id = int(tigris_issue.xpath('issue_id')[0].text)
+    issue_id = tigris_issue_id + gh_issue_offset
     title = html.unescape(tigris_issue.xpath('short_desc')[0].text)
     # Overwrite an existing issue, if present.
     try:
@@ -201,10 +211,12 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
         # https://developer.github.com/v3/guides/best-practices-for-integrators/#dealing-with-abuse-rate-limits
         time.sleep(1)
         gh_issue = repo.create_issue(title)
-        if gh_issue.number != issue_id:
-            print(issue_id, gh_issue.number)
-            # Someone's created an issue whilst we working, overwrite theirs.
-            gh_issue = repo.get_issue(issue_id)
+    time.sleep(1)
+    print('Importing Tigris issue {} as new issue {}: "{}"'.format(tigris_issue_id, issue_id, title))
+    if gh_issue.number != issue_id:
+        print(issue_id, gh_issue.number)
+        # Someone's created an issue whilst we working, overwrite theirs.
+        gh_issue = repo.get_issue(issue_id)
 
     state = 'open'
     if tigris_issue.xpath('issue_status')[0].text in (
@@ -228,7 +240,11 @@ def import_to_github(tigris_issue, repo, user, passwd, attachment_repo):
             long_desc_text = 'No text was provided with this entry.'
         unescaped_long_desc_text = html.unescape(long_desc_text)
         for line in unescaped_long_desc_text.splitlines():
-            if not line:
+            if line:
+                # Edit anything of the form '#number' as this is parsed by 
+                # GitHub's markdown as a link to another issue.
+                line = re.sub(r'#(\d+)', escape_issue_markdown_repl, line)
+            else:
                 # GitHub's markdown doesn't tolerate empty quote lines.
                 line = ' '
             body += '\r\n>' + line
@@ -263,6 +279,13 @@ def main():
     issue_repo = gh.get_repo(input("GitHub repository for issues: "))
     attachment_repo = input("GitHub repository for attachments: ")
     assert issue_repo.has_issues
+    # GitHub's numbering treats issues and pull requests as the same thing.
+    # use the number of pull requests to determine what an issue's ID should
+    # be on GitHub.
+    pull_requests = issue_repo.get_pulls(state='all', direction='desc')
+    issue_offset = 0
+    if pull_requests:
+        issue_offset = pull_requests[0].number
     for issue_group_file in glob.glob('xml/*.xml'):
         with open(issue_group_file, 'rb') as f_in:
             issues_xml = lxml.etree.XML(f_in.read())
@@ -288,7 +311,7 @@ def main():
                 num_retries = 0
                 while num_retries < 10:
                     try:
-                        import_to_github(tigris_issue, issue_repo,
+                        import_to_github(tigris_issue, issue_repo, issue_offset,
                                          user, passwd, attachment_repo)
                         break
                     except Exception as e:
@@ -305,13 +328,13 @@ def main():
             for tigris_issue in issues_xml:
                 issue_id = int(tigris_issue.xpath('issue_id')[0].text)
                 print(issue_id)
-                gh_issue = issue_repo.get_issue(issue_id)
+                gh_issue = issue_repo.get_issue(issue_id + issue_offset)
                 reset_time = gh.rate_limiting_resettime
                 if gh.rate_limiting[0] < 10:
                     delay = 10 + (reset_time - time.time())
                     print('Waiting ' + delay + 's for rate limit to reset.')
                     time.sleep(delay)
-                add_relationships(tigris_issue, gh_issue)
+                add_relationships(tigris_issue, gh_issue, issue_offset)
                 time.sleep(1)
 
 
