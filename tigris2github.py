@@ -147,6 +147,7 @@ def add_relationships(tigris_issue, gh_issue, tigris_to_github):
         suffix += get_relationship_text(tigris_issue, gh_issue,
                                         tigris_to_github, field_name, relationship)
     if suffix:
+        print("Adding Relationship info for Tigris issue")
         gh_issue.edit(body=gh_issue.body + suffix)
 
 
@@ -263,7 +264,7 @@ def upload_to_github(tigris_issue, repo, mapping, attachment_repo, args):
         time.sleep(1)
         gh_issue = repo.create_issue(title)
 
-    time.sleep(1)
+    time.sleep(5)
 
     print('Importing Tigris issue {} as new issue {}: "{}"'.format(tigris_issue_id, issue_id, title))
     if gh_issue.number != issue_id:
@@ -402,13 +403,18 @@ def upload_tigris_issue_to_github(gh, issue_repo, attachment_repo, tigris_issue,
         try:
             upload_to_github(tigris_issue, issue_repo, mapping, attachment_repo, args)
             break
+        except UnknownObjectException as e:
+            print("In upload_tigris_issue_to_github(): Got Exception:%s"%e)
+            print("Try another time: Skipping")
+            break
+
         except Exception as e:
             print("In upload_tigris_issue_to_github(): Got Exception:%s"%e)
             num_retries += 1
             time.sleep(60 * num_retries)
     # Ensure that there's a second delay between successive API
     # calls.
-    time.sleep(1)
+    time.sleep(5)
 
 def sanity_check_mapping(mapping, max_tigris_id, pr_numbers):
     """
@@ -436,6 +442,8 @@ def process_command_line():
     parser.add_argument('--skip_upload_to_github', action='store_false', dest='upload_to_github', 
                         default=True, help="Upload the tigris bugs to github")
     parser.add_argument('--sanity_check', action='store_true', default=False, help='Run sanity checks on mapping')
+    parser.add_argument('--start_issue', type=int, help="Start at this tigris issue")
+    parser.add_argument('--end_issue', type=int, help='End at his tigris issue')
     args = parser.parse_args()
 
 
@@ -443,7 +451,6 @@ def process_command_line():
 
 
 def main():
-    import pdb; pdb.set_trace()
 
     max_tigris_id =0
     args = process_command_line()
@@ -473,12 +480,30 @@ def main():
         github_to_tigris = {v: k for k, v in tigris_to_github.items()}
 
         for gh_index in sorted(github_to_tigris):
+            if gh_index % 100 == 0:
+                print("Sleeping every 100 for 1 minute")
+                time.sleep(60)
+
             tigris_index = github_to_tigris[gh_index]
+            if args.start_issue and tigris_index < args.start_issue:
+                continue
+            elif args.end_issue and tigris_index > args.end_issue:
+                continue
             upload_tigris_issue_to_github(gh, issue_repo, attachment_repo, tigris_issues[tigris_index], tigris_to_github, args)
 
 
         # Now all the issues are in imported add the relationships between them.
         for tigris_id in tigris_issues:
+            if args.start_issue and tigris_index < args.start_issue:
+                continue
+            elif args.end_issue and tigris_index > args.end_issue:
+                continue
+
+            if tigris_id % 100 == 0:
+                print("Sleeping every 100 for 1 minute")
+                time.sleep(60)
+
+
             gh_id=tigris_to_github[tigris_id]
             add_issue_relationships(gh_id, tigris_issues[tigris_id], tigris_id, issue_repo, gh, tigris_to_github)
 
