@@ -199,7 +199,7 @@ def import_attachment(tigris_issue, gh_issue, attachment_repo, args):
         url_suffix = attachid + '/' + filename
         dest_url = url_prefix + '/' + url_suffix
         comment_url = '/'.join(('https://github.com',
-                                args.attachment_repo, 'blob/master', url_suffix))
+                                args.attachment_repo, 'blob/master', tigris_issue_id, url_suffix))
         suffix += '\r\n' + who
         suffix += ' attached [' + filename + '](' + comment_url + ')'
         suffix += ' at ' + attachment.xpath('date')[0].text + '.\r\n'
@@ -481,17 +481,20 @@ def main():
         github_to_tigris = {v: k for k, v in tigris_to_github.items()}
 
         if not args.relationship_only:
+            processed = 1
             for gh_index in sorted(github_to_tigris):
-                if gh_index % 100 == 0:
-                    print("Sleeping every 100 for 1 minute")
-                    time.sleep(60)
-
                 tigris_index = github_to_tigris[gh_index]
                 if args.start_issue and tigris_index < args.start_issue:
                     continue
                 elif args.end_issue and tigris_index > args.end_issue:
                     continue
+
+                if processed % 100 == 0:
+                    print("upload_tigris_issue_to_github()->Sleeping every 100 for 1 minute")
+                    time.sleep(60)
+
                 upload_tigris_issue_to_github(gh, issue_repo, attachment_repo, tigris_issues[tigris_index], tigris_to_github, args)
+                processed += 1
 
 
         # Now all the issues are in imported add the relationships between them.
@@ -503,7 +506,7 @@ def main():
                 continue
 
             if tigris_id % 100 == 0:
-                print("Sleeping every 100 for 1 minute")
+                print("add_issue_relationships()->Sleeping every 100 for 1 minute")
                 time.sleep(60)
 
 
