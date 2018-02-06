@@ -336,7 +336,7 @@ def build_tigris_to_github_map(max_tigris_id, issue_repo):
     
     # gh_issues = issue_repo.get_issues(state='all', direction='desc')
     # issue_numbers = [i.number for i in gh_issues if not i.pull_request]
-    moved_issue_start_id = max(pr_numbers, max_tigris_id)
+    moved_issue_start_id = max(max(pr_numbers), max_tigris_id)
 
     current_offset = 1
     for tid in range(1, max_tigris_id+1):
