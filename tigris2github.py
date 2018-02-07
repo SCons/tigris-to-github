@@ -131,11 +131,13 @@ def get_relationship_text(tigris_issue, gh_issue, tigris_to_github, field_name, 
     return suffix
 
 
-def add_relationships(tigris_issue, gh_issue, tigris_to_github):
+def add_relationships(tigris_issue, gh_issue, tigris_to_github, tigris_id, gh_id):
     '''Add the relationships between issues to GitHub.
     :Param tigris_issue: XML Element with the current issue.
     :Param gh_issue: handle to github issue
     :Param tigris_to_github: map from tigris issue number to github issue number
+    :Param tigris_id: the number of the current tigris issue
+    :Param gh_id: The number of the github issue
     '''
     suffix = ''
     for field_name, relationship in (
@@ -147,7 +149,7 @@ def add_relationships(tigris_issue, gh_issue, tigris_to_github):
         suffix += get_relationship_text(tigris_issue, gh_issue,
                                         tigris_to_github, field_name, relationship)
     if suffix:
-        print("Adding Relationship info for Tigris issue: %d [GH %d]"%(tigris_issue, gh_issue))
+        print("Adding Relationship info for Tigris issue: %d [GH %d]"%(tigris_id, gh_id))
         gh_issue.edit(body=gh_issue.body + suffix)
 
 
@@ -168,7 +170,7 @@ def add_issue_relationships(gh_id, tigris_issue, tigris_id, issue_repo, gh, tigr
         delay = 10 + (reset_time - time.time())
         print('Waiting ' + delay + 's for rate limit to reset.')
         time.sleep(delay)
-    add_relationships(tigris_issue, gh_issue, tigris_to_github)
+    add_relationships(tigris_issue, gh_issue, tigris_to_github, tigris_id, gh_id)
     time.sleep(1)
 
 def import_attachment(tigris_issue, gh_issue, attachment_repo, args):
