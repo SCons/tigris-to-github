@@ -180,6 +180,11 @@ def download_xmls_for_bugs(query_url, start_id, max_id, outdir, AT_A_TIME=50):
 
 
 def fetch_files(project, outdir):
+    """
+    :Param project: project name on tigris's site
+    :Param outdir: Directory to dump the xml files with info we pull from tigris' bugtracker
+    :Return: Maximum bug id.
+    """
     # Ensure that the output directory exists
     if not os.path.isdir(outdir):
         os.makedirs(outdir)
@@ -192,6 +197,8 @@ def fetch_files(project, outdir):
 
     # Downloading information about those bugs.
     download_xmls_for_bugs(query_url, start_id, max_id, outdir)
+
+    return int(max_id)
 
 
 def get_tag_text_from_xml(xml_doc, tag_name, index=0):
